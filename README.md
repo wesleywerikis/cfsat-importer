@@ -53,6 +53,91 @@ Separação clara de responsabilidades:
 
 ------------------------------------------------------------------------
 
+## 🔄 Fluxo Completo da Aplicação
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1) BOOT                                                              │
+└─────────────────────────────────────────────────────────────────────┘
+   main(args)
+      │
+      v
+   SpringApplication.run()
+      │
+      ├─► AutoConfig:
+      │     - DataSource (Hikari)
+      │     - JPA/Hibernate (ddl-auto=update)
+      │     - Repositories / Beans / DI
+      │     - H2 arquivo: ./data/cfsat.mv.db
+      │
+      v
+   CommandLineRunner.run() ──► ConsoleApp.start()
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 2) MENU (ConsoleApp)                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+   Opção "1" Importar  ─┐
+   Opção "2" Listar Nº  ├─► chama ConsultarCuponsService
+   Opção "3" Listar R$  │
+   Opção "4" Relatório  ┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 3) OPÇÃO 1 — IMPORTAÇÃO (fluxo principal)                            │
+└─────────────────────────────────────────────────────────────────────┘
+ConsoleApp.importar()
+   │  lê caminho da pasta (String p)
+   │  Path pasta = Path.of(p)
+   v
+ImportarCuponsService.importarPasta(pasta)  (@Transactional)
+   │
+   ├─► valida pasta (exists + isDirectory)
+   ├─► contadores: encontrados / importados / duplicados / ignorados
+   │
+   v
+Files.walk(pasta) → filtra *.xml → LOOP por xmlPath
+   │
+   ├─► encontrados++
+   │
+   ├─► parser.parse(xmlPath)  (DomCfeSatXmlParser)
+   │      │
+   │      ├─► protege XXE (SECURE_PROCESSING + bloqueia DTD/Schema)
+   │      ├─► parse XML → Document
+   │      ├─► se CANCELADO (CFeCanc ou cancCFe) → Optional.empty
+   │      ├─► extrai chave/numero/data/total
+   │      ├─► monta Cupom
+   │      └─► monta itens <det> → cupom.addItem(item)
+   │
+   ├─► se Optional.empty → ignorados++ → continue
+   │
+   ├─► repo.existsByChaveAcesso(chave)?
+   │      ├─► SIM → duplicados++ → continue
+   │      └─► NÃO → repo.save(cupom) → importados++
+   │
+   v
+FIM LOOP → retorna ResultadoImportacao
+   │
+   v
+ConsoleApp imprime resumo → volta ao MENU
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 4) OPÇÕES 2/3/4 — CONSULTAS                                           │
+└─────────────────────────────────────────────────────────────────────┘
+(2) listar por número
+   ConsoleApp → ConsultarCuponsService → repo.findAll(Sort ASC numeroCFe)
+   → imprime resumo
+
+(3) listar por valor
+   ConsoleApp → ConsultarCuponsService → repo.findAll(Sort DESC valorTotal)
+   → imprime resumo
+
+(4) relatório detalhado (cadeia)
+   ConsoleApp → ConsultarCuponsService → repo.findAllOrderByChaveComItens()
+   (join fetch itens)
+   → imprime Cupom -> Itens
+```
+
+------------------------------------------------------------------------
+
 ## 🔐 Segurança
 
 Parser DOM com proteção contra XXE:
